@@ -4,11 +4,10 @@ import time
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from transformers import AdamW
+from transformers import AdamW, get_linear_schedule_with_warmup
 from data import load_and_preprocess
 from model import build_model
 from train import train_epoch, evaluate
-
 
 def main():
     # -------------------------
@@ -19,7 +18,7 @@ def main():
         test_size=0.2,
         seed=42,
         save=False,
-        load_saved=True  # 如果之前已保存，可设置为 True
+        load_saved=True  # 如之前已保存，可改为 True
     )
 
     # -------------------------
@@ -42,13 +41,21 @@ def main():
     print(f"Training on device: {device}")
 
     # -------------------------
-    # 5. 设置优化器（固定学习率）
+    # 5. 设置优化器及动态学习率调度器
     # -------------------------
     learning_rate = 2e-5
     weight_decay = 0.01
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     epochs = 10
+    total_steps = len(train_loader) * epochs
+    warmup_steps = int(0.1 * total_steps)  # 预热步数设为总步数的10%
+
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_steps
+    )
 
     # -------------------------
     # 6. 设置 TensorBoard 日志记录
@@ -62,14 +69,16 @@ def main():
     # 7. 训练与验证循环
     # -------------------------
     for epoch in range(epochs):
-        print(f"\n----- Epoch {epoch + 1} -----")
-        train_loss = train_epoch(model, train_loader, optimizer, device)
+        print(f"\n----- Epoch {epoch+1} -----")
+        # 将 scheduler 传递给 train_epoch，实现动态学习率调度
+        train_loss = train_epoch(model, train_loader, optimizer, device, scheduler=scheduler)
         val_loss, val_accuracy, val_precision, val_recall, val_f1 = evaluate(model, val_loader, device)
+        current_lr = scheduler.get_last_lr()[0]
 
         print(f"Train Loss: {train_loss:.4f}")
         print(f"Val Loss: {val_loss:.4f}, Accuracy: {val_accuracy:.4f}")
         print(f"Precision: {val_precision:.4f}, Recall: {val_recall:.4f}, F1: {val_f1:.4f}")
-        # 固定学习率，不会变化，所以不需要记录学习率更新
+        print(f"Current learning rate: {current_lr:.8f}")
 
         writer.add_scalar("Loss/Train", train_loss, epoch)
         writer.add_scalar("Loss/Validation", val_loss, epoch)
@@ -77,6 +86,7 @@ def main():
         writer.add_scalar("Precision/Validation", val_precision, epoch)
         writer.add_scalar("Recall/Validation", val_recall, epoch)
         writer.add_scalar("F1/Validation", val_f1, epoch)
+        writer.add_scalar("Learning Rate", current_lr, epoch)
 
     # -------------------------
     # 8. 保存模型和分词器
@@ -89,7 +99,6 @@ def main():
     print(f"Model and tokenizer saved at {model_save_path}")
 
     writer.close()
-
 
 if __name__ == "__main__":
     main()

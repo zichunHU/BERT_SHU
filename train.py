@@ -2,7 +2,7 @@
 import torch
 from tqdm import tqdm
 
-def train_epoch(model, dataloader, optimizer, device):
+def train_epoch(model, dataloader, optimizer, device, scheduler=None):
     """
     在训练集上执行一个训练轮次
 
@@ -11,6 +11,7 @@ def train_epoch(model, dataloader, optimizer, device):
         dataloader: 训练数据的 DataLoader
         optimizer: 用于更新模型参数的优化器
         device: 模型和数据所在设备（GPU 或 CPU）
+        scheduler: 学习率调度器（可选），用于动态调整学习率
     返回:
         avg_loss: 当前轮次的平均训练损失
     """
@@ -18,14 +19,14 @@ def train_epoch(model, dataloader, optimizer, device):
     total_loss = 0
 
     for batch in tqdm(dataloader, desc="Training"):
-        # 将输入数据移动到指定设备
+        # 将输入数据移动到指定设备上
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["label"].to(device)
 
         optimizer.zero_grad()  # 清除上一步梯度
 
-        # 前向传播，自动计算交叉熵损失
+        # 前向传播并计算损失
         outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
         loss = outputs.loss
         total_loss += loss.item()
@@ -35,6 +36,10 @@ def train_epoch(model, dataloader, optimizer, device):
 
         # 参数更新
         optimizer.step()
+
+        # 如果传入了 scheduler，则更新学习率
+        if scheduler is not None:
+            scheduler.step()
 
     avg_loss = total_loss / len(dataloader)
     return avg_loss
@@ -71,6 +76,7 @@ def evaluate(model, dataloader, device):
             loss = outputs.loss
             total_loss += loss.item()
 
+            # 预测：取 logits 中概率最大的类别
             predictions = torch.argmax(outputs.logits, dim=1)
             correct += (predictions == labels).sum().item()
             total += labels.size(0)
